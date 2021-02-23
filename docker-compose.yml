@@ -1,0 +1,40 @@
+version: '3.7'
+services:
+  gateway:
+    image: kcollins/ignition:8.1.0
+    user: root
+    networks:
+      - factory-plus
+    deploy:
+      placement:
+        constraints:
+          - node.hostname == amrc-factoryP-1
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=factory-plus"
+        - "traefik.http.routers.ignition.rule=Host(`ignition.amrc-factoryplus.shef.ac.uk`)"
+        - "traefik.http.services.ignition.loadbalancer.server.port=8088"
+          #- "traefik.http.routers.ignition.tls=true"
+    stop_grace_period: 30s
+    secrets:
+      - ignition_gateway-password
+    volumes:
+      - gateway_data:/var/lib/ignition/data
+      - gateway_webserver_prod__8_1_0:/usr/local/share/ignition/webserver
+      - ./ignition-modules:/modules
+      - ./jdbc:/jdbc
+    environment:
+      GATEWAY_ADMIN_PASSWORD_FILE: /run/secrets/gateway-password
+      GATEWAY_JDBC_RELINK: 'true'
+secrets:
+  ignition_gateway-password:
+    external: true
+
+volumes:
+  gateway_data:
+  gateway_webserver_prod__8_1_0:
+
+networks:
+  factory-plus:
+    external: true
+    name: factory-plus
