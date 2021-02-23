@@ -1,8 +1,8 @@
-# Install Ignition on Central Server
+# Factory+ Ignition Stack
 Ignition is the `Primary Application` for the Factory+ architecture.
 
 ### Modules
-Ensure that you place `MQTT-Recorder-signed.modl` and `MQTT-Engine-signed.modl` into the `ignition-modules` folder before deploying. These can be found from the Inductive Automation website.
+Ensure that you place `MQTT-Recorder-signed.modl` and `MQTT-Engine-signed.modl` into an `ignition-modules` folder in the root of this directory before deploying. These can be found from the Inductive Automation website.
 
 ### Mounted Volumes
 Mounted volumes allow the container to persist data between restarts and are effectively a symbolic link to a path on the host OS. For the Ignition stack, we persist a number of volumes:
