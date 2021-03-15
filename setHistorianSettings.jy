@@ -1,0 +1,18 @@
+# Check if tag has History dictating property
+if (system.tag.exists(str(event.getTagPath()) + ".RecordToHistorian")):
+	# Get tag property dictating if to be recorded to Historian
+	record_to_historian = system.tag.readBlocking([str(event.getTagPath()) + ".RecordToHistorian"], 500)[0].value
+
+	history_configs = {
+		"historyEnabled" : record_to_historian,
+		"historyProvider" : "FactoryPlus_Historian"
+	}
+
+	try:
+		for config in history_configs:
+			# Update History Enable Settings
+			path = str(event.getTagPath()) + "." + config
+			value = history_configs[config]
+			result = system.tag.writeAsync([path] , [value], None)
+	except:
+		system.util.getLogger("History Config Script").info("Error: " + str(result) + str(event.getTagPath()))

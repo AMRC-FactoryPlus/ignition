@@ -1,0 +1,172 @@
+def is_string_json(string):
+	import json
+	
+	# Check if Boolean
+	if string.strip() == "true" or string.strip() == "false":
+		return False
+	
+	# Check if numeric
+	if string.replace('.','',1).isdigit():
+		return False
+	try:
+		json.loads(string)
+		return True
+	except:
+		return False
+
+
+# ---Script---
+trigger_tag_name = event.getTagPath().getItemName()
+
+# Check if relevant tag and not DBIRTH
+if trigger_tag_name == "Command_Timestamp" and initialChange == False:
+
+    import os
+
+    udt_path = str(event.getTagPath().getParentPath())
+    udt_base_path, cmd_type = os.path.split(udt_path)
+    error_response = ""
+
+    # Check for valid command type names for CCL check
+    if (cmd_type == "Execute_Remote_Command"):
+        try:
+            # Obtain senders details from received UDT path
+            senders_path = udt_path.split("/")
+            tag_provider = senders_path[0]
+            tag_group = senders_path[1]
+            tag_node = senders_path[2]
+            try:
+                tag_device = senders_path[3]
+                if tag_device == "Execute_Remote_Command":
+                	tag_device = ""
+            except IndexError:
+                # Command coming from Node (not Device)
+                tag_device = ""
+            # Get receivers details as specified in UDT
+            rec_group =  system.tag.readBlocking([udt_path + "/Receivers_Group_ID"])[0].value
+            rec_node =   system.tag.readBlocking([udt_path + "/Receivers_Edge_Node_ID"])[0].value
+            rec_device = system.tag.readBlocking([udt_path + "/Receivers_Device_ID"])[0].value
+            # Command details
+            cmd_name =   system.tag.readBlocking([udt_path + "/Tag_Path"])[0].value
+            cmd_args =   system.tag.readBlocking([udt_path + "/Tag_Value"])[0].value
+        except Exception as e:
+            error_response = "Incoming UDT Read Error: " + str(e)
+
+        # Perform additional checks
+        if rec_group == tag_group and rec_node == tag_node and rec_device == tag_device:
+            # Check if Script triggered by Ignition publishing to tag (Recursive call)
+            exit()
+        elif cmd_name == "":
+            # Ignore birth messages if not detected by initialChange
+            exit()
+        elif system.tag.readBlocking([tag_provider + "/" + rec_group + "/" + rec_node + "/" + rec_device + "/Device Info/Online"])[0].value == False:
+            # Check if target device online
+            error_response = "Receiving Device Offline."
+        else:
+            # Check if allowed agains CCLs
+            db_params = {
+                "senders_group_id": tag_group,
+                "senders_edge_node_id": tag_node,
+                "senders_device_id": tag_device,
+                "receivers_group_id": rec_group,
+                "receivers_edge_node_id": rec_node,
+                "receivers_device_id": rec_device,
+                "command_name": cmd_name
+            }
+
+            # Asses if node allowed to issue CMD to other node
+            allowed_cmds = system.db.runNamedQuery("GetCommandControlList", db_params)
+            if allowed_cmds.getRowCount() > 0:
+                is_allowed = True
+            else:
+                is_allowed = False
+                error_response = "No permision to execute command."
+                system.util.getLogger("CMD CCL Logger").info("CCL Permission Denied: " + trigger_tag_name + " @ " + \
+                                                      udt_base_path + ". Command type: " + cmd_type + " Allowed CMDs: " + str(allowed_cmds.getRowCount()) + " . DB Params = " + str(db_params))
+
+            # Forward command to relevant recipient
+            if is_allowed:
+                # DEBUG Ignition log entry
+                system.util.getLogger("CMD CCL Logger").info("CCL Permission Approved: " + trigger_tag_name + " @ " + \
+                                      udt_base_path + ". Command type: " + cmd_type + " Allowed CMDs: " + str(allowed_cmds.getRowCount()))
+                # Build target address
+                rec_tag_base_path = tag_provider + "/" + rec_group + "/" + rec_node + "/" + rec_device + "/" + cmd_name
+
+                # Publish to Destination Tag
+                # UDT Tag Type
+                if system.tag.exists(rec_tag_base_path):
+                    try:
+						import json
+						
+						if is_string_json(cmd_args):
+							# JSON string to JSON object, fix quotes
+							cmd_args_obj = json.loads(cmd_args.replace("'", '"'))
+							# For loop to build all receiving UDT tags
+							for arg in cmd_args_obj:
+								path = [rec_tag_base_path + "/" + arg]
+								value = [cmd_args_obj[arg]]
+								system.tag.writeBlocking(path, value)
+						else:
+							# Deliver tag value as is
+							system.tag.writeBlocking([rec_tag_base_path], [cmd_args])
+                    except Exception as e:
+                        error_response = "Tag delivery error. " + str(e)
+                else:
+                    error_response = "Tag delivery error. " + "Tag does not exist: " + rec_tag_base_path
+
+                # JSON Tag Type
+                if system.tag.exists(rec_tag_base_path + "_JSON"):
+                    try:
+                        resp_tag_paths =  [ rec_tag_base_path + "_JSON" ]
+                        resp_tag_values = [ cmd_args ]
+                        system.tag.writeBlocking(resp_tag_paths, resp_tag_values)
+                    except Exception as e:
+                        error_response = "Tag delivery error. Tag: " + rec_tag_base_path + "_JSON" + ". Error: " + str(e)
+                else:
+                    #error_response = "Tag delivery error. " + "Tag does not exist: " + rec_tag_base_path + "_JSON"
+                    # No JSON back expected.
+                    pass
+
+        # Respond to sender
+        if len(error_response) != 0:
+            response = "Ignition CCL Check Error: " + error_response
+        else:
+            response = "OK"
+
+        rec_tag_base_path = udt_base_path + "/" + "Remote_Command_Response"
+        resp_tags = {
+            "Receivers_Group_ID": str(rec_group),
+            "Receivers_Edge_Node_ID": str(rec_node),
+            "Receivers_Device_ID": str(rec_device),
+            "Tag_Path": str(cmd_name),
+            "Response": response
+        }
+
+        # Publish response (UDT)
+        # Create tag destination paths
+        import json
+        resp_tag_paths = []
+        resp_tag_values = []
+
+        for name in resp_tags:
+            resp_tag_paths.append(rec_tag_base_path + "/" + name)
+            resp_tag_values.append(resp_tags[name])
+
+        if system.tag.exists(rec_tag_base_path):
+            system.tag.writeBlocking(resp_tag_paths, resp_tag_values)
+            # Time has a differnet datatype, separate write, last trigger/value change
+            system.tag.writeBlocking([rec_tag_base_path + "/" + "Command_Timestamp"], [system.date.now()])
+        else:
+            system.util.getLogger("CMD CCL Logger").info("No Remote_Command_Response tag: " + rec_tag_base_path)
+
+
+        # Publish response (JSON)
+        if system.tag.exists(rec_tag_base_path + "_JSON"):
+            # Add timestamp
+            resp_tags["Command_Timestamp"] = int(system.date.toMillis(system.date.now()))
+            # Send off
+            system.tag.writeBlocking([rec_tag_base_path + "_JSON"], [json.dumps(resp_tags)])
+        else:
+            system.util.getLogger("CMD CCL Logger").info("No Remote_Command_Response_JSON tag: " + rec_tag_base_path + "_JSON")
+            
+            
